@@ -17,6 +17,8 @@ COMMIT = 'a' * 40
 
 class Validation(unittest.TestCase):
     def setUp(self):
+        self.env = mock.patch.dict(os.environ, {'GITHUB_ACTIONS':'false'})
+        self.env.start(); self.addCleanup(self.env.stop)
         self.tmp = tempfile.TemporaryDirectory(); self.folder = Path(self.tmp.name)
         self.files = {name: b'fixture' for name in m.REQUIRED if name != 'BUILD_INFO.json'}
         for n in ('libc.prx','libkernel.prx','libScePad.prx'): self.files['libs/'+n]=b'fixture'
@@ -58,6 +60,20 @@ class Validation(unittest.TestCase):
             with self.assertRaises(ValueError): m.validate(self.folder, COMMIT)
         self.write(bad_hash=True)
         with self.assertRaises(ValueError): m.validate(self.folder, COMMIT)
+    def test_hosted_metadata_enforced(self):
+        self.write()
+        hosted = {'GITHUB_ACTIONS':'true', 'GITHUB_REPOSITORY':'RyGT-Team/RyGT-ci',
+                  'GITHUB_SHA':'b'*40, 'GITHUB_RUN_ID':'123', 'GITHUB_RUN_ATTEMPT':'1'}
+        with mock.patch.dict(os.environ, hosted):
+            with self.assertRaises(ValueError): m.validate(self.folder, COMMIT)
+        control = {'repository':hosted['GITHUB_REPOSITORY'], 'commit':hosted['GITHUB_SHA'],
+                   'run_url':'https://github.com/RyGT-Team/RyGT-ci/actions/runs/123', 'attempt':'1'}
+        self.info['ci_control'] = control
+        self.write()
+        marker = json.loads((self.folder/'CI-BUILD.json').read_text())
+        marker['ci_control'] = control
+        (self.folder/'CI-BUILD.json').write_text(json.dumps(marker))
+        with mock.patch.dict(os.environ, hosted): m.validate(self.folder, COMMIT)
     def test_mismatched_source_and_checksum(self):
         self.write()
         with self.assertRaises(ValueError): m.validate(self.folder,'b'*40)
@@ -130,10 +146,3 @@ class Validation(unittest.TestCase):
             with self.assertRaises(ValueError): m.resolve()
 
 if __name__ == '__main__': unittest.main()
-
-
-
-
-
-
-
