@@ -85,6 +85,7 @@ jobs:
         with:
           python-version: '3.12'
       - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        id: msys2
         with:
           msystem: UCRT64
           location: C:/msys64
@@ -113,10 +114,12 @@ jobs:
           if ($LASTEXITCODE -or (git -C C:/rygt7-ci/source rev-parse HEAD) -cne $env:SOURCE_SHA) { throw 'Source mismatch' }
       - name: Build and package RyGT7 client
         shell: pwsh
+        env:
+          UCRT_ROOT: ${{ steps.msys2.outputs.msys2-location }}/ucrt64
         run: |
           $ErrorActionPreference = 'Stop'
           . ./ci/rygt7/setup-tools.ps1
-          & ./ci/rygt7/build-windows.ps1 -SourceRoot C:/rygt7-ci/source -SourceSha $env:SOURCE_SHA -OutputRoot C:/rygt7-ci/build -UcrtRoot C:/msys64/ucrt64
+          & ./ci/rygt7/build-windows.ps1 -SourceRoot C:/rygt7-ci/source -SourceSha $env:SOURCE_SHA -OutputRoot C:/rygt7-ci/build -UcrtRoot $env:UCRT_ROOT
           $env:GT7_SOURCE_ROOT = 'C:/rygt7-ci/source'
           $env:GT7_RENDERER_ROOT = 'C:/rygt7-ci/build/renderer-source'
           python -m unittest discover -s ci/rygt7 -p 'test_*.py'
