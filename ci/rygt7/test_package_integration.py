@@ -35,6 +35,10 @@ class PackageIntegration(unittest.TestCase):
             (root/'renderer/LICENSE').write_text('renderer license')
             (root/'renderer/externals/fixture/LICENSE').write_text('dependency license')
             (root/'deps/fixture/LICENSE').write_text('dependency license')
+            nested=root/'deps/fixture/LICENSES/nested';nested.mkdir(parents=True)
+            (nested/'NOTICE.txt').write_text('nested dependency notice')
+            nested_renderer=root/'renderer/externals/fixture/LICENSES/nested';nested_renderer.mkdir(parents=True)
+            (nested_renderer/'NOTICE.txt').write_text('nested renderer notice')
             for n in ('libgcc','libstdc++','libwinpthread'):
                 p=root/'ucrt/share/licenses'/n;p.mkdir(parents=True);(p/'LICENSE').write_text('runtime license')
             names=[x.strip() for x in (source/'build-support/runtime-files.txt').read_text().splitlines() if x.strip() and not x.startswith('#')]
@@ -60,6 +64,10 @@ class PackageIntegration(unittest.TestCase):
             info=json.loads(args.info.read_text());info['renderer_vma_patch']=assembler.verify_renderer(renderer_source)
             args.info.write_text(json.dumps(info),encoding='utf-8')
             assembler.package(args);validator.validate(root/'out',commit)
+            archive=root/'out'/(args.name+'.zip')
+            with zipfile.ZipFile(archive) as z:
+                self.assertIn(args.name+'/licenses/RyGT7/3rdparty/fixture/LICENSES/nested/NOTICE.txt',z.namelist())
+                self.assertIn(args.name+'/licenses/shadGT7/externals/fixture/LICENSES/nested/NOTICE.txt',z.namelist())
 
 def restore_env(original):
     for name,val in original.items():
