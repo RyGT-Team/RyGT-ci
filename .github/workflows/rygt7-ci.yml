@@ -1,0 +1,181 @@
+name: RyGT7 CI package
+run-name: RyGT7 main CI build
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this commit is already packaged
+        type: boolean
+        default: false
+  schedule:
+    - cron: '12,27,42,57 * * * *'
+  pull_request:
+    paths:
+      - .github/workflows/rygt7-ci.yml
+      - ci/rygt7/**
+permissions:
+  contents: read
+concurrency:
+  group: rygt7-main-package-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      needed: ${{ steps.source.outputs.needed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Test trusted build and package controls
+        run: |
+          python3 -m unittest discover -s ci/rygt7 -p 'test_*.py'
+          python3 -m unittest discover -s ci/rygt7/tests -p 'test_*.py'
+      - name: Resolve exact RyGT7 main revision
+        id: source
+        env:
+          FORCE_BUILD: ${{ github.event_name == 'pull_request' || inputs.force }}
+        run: python3 ci/rygt7/registry_ci.py resolve
+  tests:
+    needs: source
+    if: needs.source.outputs.needed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+    steps:
+      - name: Fetch exact public RyGT7 source
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init source
+          git -C source remote add origin https://gitlab.com/rygt-team/rygt7.git
+          git -C source fetch --depth=1 origin "$SOURCE_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Build and test converter
+        working-directory: source
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build
+          cmake --preset linux-release-cli
+          cmake --build --preset linux-release-cli --parallel 2
+          ctest --test-dir build/linux-release-cli --output-on-failure --no-tests=error --output-junit "$GITHUB_WORKSPACE/rygt7-converter-tests.xml"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: rygt7-converter-tests-${{ needs.source.outputs.commit }}
+          path: rygt7-converter-tests.xml
+          if-no-files-found: warn
+          retention-days: 7
+  windows:
+    needs: [source, tests]
+    if: needs.source.outputs.needed == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e
+        id: msys2
+        with:
+          msystem: UCRT64
+          location: C:/msys64
+          update: true
+          cache: false
+          install: >-
+            base-devel git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+      - name: Fetch exact public RyGT7 source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid source SHA' }
+          New-Item -ItemType Directory -Path C:/rygt7-ci/source -Force | Out-Null
+          git -C C:/rygt7-ci/source init
+          if ($LASTEXITCODE) { throw 'git init failed' }
+          git -C C:/rygt7-ci/source config core.longpaths true
+          git -C C:/rygt7-ci/source remote add origin https://gitlab.com/rygt-team/rygt7.git
+          if ($LASTEXITCODE) { throw 'git remote failed' }
+          git -C C:/rygt7-ci/source fetch --depth=1 origin $env:SOURCE_SHA
+          if ($LASTEXITCODE) { throw 'GitLab fetch failed' }
+          git -C C:/rygt7-ci/source checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -or (git -C C:/rygt7-ci/source rev-parse HEAD) -cne $env:SOURCE_SHA) { throw 'Source mismatch' }
+      - name: Build and package RyGT7 client
+        shell: pwsh
+        env:
+          UCRT_ROOT: ${{ steps.msys2.outputs.msys2-location }}/ucrt64
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . ./ci/rygt7/setup-tools.ps1
+          & ./ci/rygt7/build-windows.ps1 -SourceRoot C:/rygt7-ci/source -SourceSha $env:SOURCE_SHA -OutputRoot C:/rygt7-ci/build -UcrtRoot $env:UCRT_ROOT
+          $env:GT7_SOURCE_ROOT = 'C:/rygt7-ci/source'
+          $env:GT7_RENDERER_ROOT = 'C:/rygt7-ci/build/renderer-source'
+          python -m unittest discover -s ci/rygt7 -p 'test_*.py'
+          if ($LASTEXITCODE) { throw 'Build adapter regression tests failed' }
+          python -m unittest discover -s ci/rygt7/tests -p 'test_*.py'
+          if ($LASTEXITCODE) { throw 'Package controller regression tests failed' }
+          $env:ARTIFACT_DIR = 'C:/rygt7-ci/build/dist'
+          python ci/rygt7/registry_ci.py validate
+          if ($LASTEXITCODE) { throw 'Windows package validation failed' }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rygt7-windows-${{ needs.source.outputs.commit }}
+          path: C:/rygt7-ci/build/dist/
+          if-no-files-found: error
+          retention-days: 7
+  package:
+    needs: [source, tests, windows]
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      ARTIFACT_DIR: dist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: rygt7-windows-${{ needs.source.outputs.commit }}
+          path: dist/
+      - name: Independently validate package and provenance
+        run: python3 ci/rygt7/registry_ci.py validate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rygt7-ci-${{ needs.source.outputs.commit }}
+          path: |
+            dist/RyGT7-ci-*.zip
+            dist/RyGT7-ci-*.zip.sha256
+            dist/CI-BUILD.json
+          if-no-files-found: error
+          retention-days: 7
+  publish:
+    needs: [source, package]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      ARTIFACT_DIR: dist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: rygt7-ci-${{ needs.source.outputs.commit }}
+          path: dist/
+      - name: Publish verified RyGT7 ci package to GitLab
+        env:
+          GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+        run: python3 ci/rygt7/registry_ci.py publish
