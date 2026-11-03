@@ -36,10 +36,29 @@ $ucrt = (Resolve-Path -LiteralPath $UcrtRoot).Path
 $gcc = Join-Path $ucrt 'bin\gcc.exe'; $runtimeCmake = Join-Path $ucrt 'bin\cmake.exe'
 $msysBin = Join-Path (Split-Path $ucrt -Parent) 'usr\bin'
 if (!(Test-Path $gcc) -or !(Test-Path $runtimeCmake)) { throw 'MSYS2 UCRT64 GCC and CMake are required' }
+# Resolve native Windows CMake/Ninja before prepending MSYS2. The UCRT CMake
+# can omit the Windows cmcldeps helper required for MSVC resource compilation.
+$pythonScripts = (& python -c "import sysconfig; print(sysconfig.get_path('scripts'))").Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Cannot locate Python scripts directory' }
+$nativeCmake = Join-Path $pythonScripts 'cmake.exe'
+$nativeNinja = Join-Path $pythonScripts 'ninja.exe'
+if (!(Test-Path -LiteralPath $nativeCmake) -or !(Test-Path -LiteralPath $nativeNinja)) {
+    throw 'Pinned native CMake and Ninja must be installed in Python scripts directory'
+}
+$nativeVersion = (& $nativeCmake --version | Select-Object -First 1)
+if ($LASTEXITCODE -ne 0 -or $nativeVersion -cne 'cmake version 3.31.6') {
+    throw 'Native Windows CMake 3.31.6 is required for the renderer'
+}
+$ninjaPackageVersion = (& python -c "import importlib.metadata; print(importlib.metadata.version('ninja'))").Trim()
+if ($LASTEXITCODE -ne 0 -or $ninjaPackageVersion -cne '1.11.1.4') {
+    throw 'Native Python Ninja package 1.11.1.4 is required for the renderer'
+}
+$nativeRc = (Get-Command rc.exe -CommandType Application -ErrorAction Stop).Source.Replace('\','/')
+$nativeNinjaCmake = $nativeNinja.Replace('\','/')
 $oldPath = $env:PATH; $oldLib = $env:LIB
 try {
     $env:PATH = "$ucrt\bin;$msysBin;$oldPath"
-    Invoke-Checked git @('-C',$source,'submodule','update','--init','--recursive')
+    Invoke-Checked git @('-C',$source,'submodule','update','--init','--recursive','--depth=1','--jobs=4')
     Invoke-CmdFile (Join-Path $source 'loader\test-gt7.cmd') (Join-Path $workspace 'launcher-tests')
     Invoke-Checked 'python' @((Join-Path $source 'build-support\test_package_release.py'))
     $runtimeBuild = Join-Path $workspace 'runtime-build'
@@ -61,11 +80,13 @@ try {
     Invoke-Checked git @('-C',$renderer,'fetch','--no-tags','origin',$pin.commit)
     Invoke-Checked git @('-C',$renderer,'checkout','--detach','FETCH_HEAD')
     Verify-Commit $renderer $pin.commit
-    Invoke-Checked git @('-C',$renderer,'submodule','update','--init','--recursive')
+    Invoke-Checked git @('-C',$renderer,'submodule','update','--init','--recursive','--depth=1','--jobs=4')
     $rendererBuild = Join-Path $workspace 'renderer-build'
-    Invoke-Checked 'cmake' @('-S',$renderer,'-B',$rendererBuild,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_C_COMPILER=clang-cl','-DCMAKE_CXX_COMPILER=clang-cl','-DCMAKE_LINKER=lld-link','-DSHADGT_RYTY_GPU=ON','-DHAVE_ENDIAN_H=OFF','-DENABLE_DISCORD_RPC=ON')
+    Invoke-Checked $nativeCmake @('-S',$renderer,'-B',$rendererBuild,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_C_COMPILER=clang-cl','-DCMAKE_CXX_COMPILER=clang-cl','-DCMAKE_LINKER=lld-link',"-DCMAKE_MAKE_PROGRAM=$nativeNinjaCmake","-DCMAKE_RC_COMPILER=$nativeRc",'-DSHADGT_RYTY_GPU=ON','-DHAVE_ENDIAN_H=OFF','-DENABLE_DISCORD_RPC=ON')
     if (!(Select-String -LiteralPath (Join-Path $rendererBuild 'CMakeCache.txt') -Pattern '^ENABLE_DISCORD_RPC:BOOL=ON$' -Quiet)) { throw 'Renderer Discord RPC configuration was not enabled' }
-    Invoke-Checked 'cmake' @('--build',$rendererBuild,'--target','ryty_gpu','ryty_audio3d','ryty_ajm','ryty_ngs2','ryty_zlib','ryty_discmap','ryty_screenshot','ryty_np','--parallel','4')
+    # Exercise the actual protobuf resource rule before the large renderer build.
+    Invoke-Checked $nativeNinja @('-C',$rendererBuild,'externals/protobuf/CMakeFiles/libprotobuf.dir/version.rc.res')
+    Invoke-Checked $nativeCmake @('--build',$rendererBuild,'--target','ryty_gpu','ryty_audio3d','ryty_ajm','ryty_ngs2','ryty_zlib','ryty_discmap','ryty_screenshot','ryty_np','--parallel','4')
     $base = Join-Path $workspace 'runtime-base.zip'
     Invoke-WebRequest -Uri 'https://gitlab.com/api/v4/projects/88084032/packages/generic/rygt7/2026-10-31/RyGT7-2026-10-31-prerelease.zip' -OutFile $base
     $runtimeSubmodules = @(& git -C $source submodule status --recursive)
