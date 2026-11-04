@@ -59,9 +59,11 @@ fonts, saves, personal settings, logs and shader caches are excluded.
 
 ## Credentials and publication
 
-The existing GitHub repository secret `GITLAB_PACKAGE_TOKEN` is provided only to
-the final publish step in a fresh Linux job. Source builds and tests never
-receive it. This token must have package read/write access to the RyGT7 project;
+The GitHub repository secret `GITLAB_PACKAGE_TOKEN` is shared by both publishers
+and provided only to the final publish step in a fresh Linux job. Source builds
+and tests never receive it. Use an active `rygt-team` group deploy token with
+`read_package_registry` and `write_package_registry` scopes. A project-scoped
+RyGTS deploy token cannot publish to the sibling RyGT7 project.
 GitLab group CI/CD variables are not automatically injected into GitHub jobs.
 `GITHUB_ACTIONS_TOKEN` is a separate credential for GitHub access/dispatch.
 

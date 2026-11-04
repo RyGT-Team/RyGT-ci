@@ -15,3 +15,7 @@ versions are `development-<runtime SHA>-renderer-<renderer SHA>`, so renderer-on
 updates trigger a new pair without overwriting another renderer build. Both
 archives must record that same renderer revision. Runtime overlay and diagnostic
 patch verification remains fail-closed; upstream incompatibilities require review.
+
+Both publishers use this GitHub repository's `GITLAB_PACKAGE_TOKEN` secret. It must
+be a `rygt-team` group deploy token with package read/write scopes, rather than a
+token scoped to only RyGTS or RyGT7. No repository access scope is required.
