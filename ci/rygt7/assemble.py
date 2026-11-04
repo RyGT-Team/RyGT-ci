@@ -150,7 +150,7 @@ def main():
         p.add_argument('--' + name, required=True)
     args = p.parse_args()
     if not re.fullmatch(r'[0-9a-f]{40}', args.source_sha): raise ValueError('invalid source SHA')
-    if args.renderer_sha != '5bfec380dd02ecd56b482b1d8ed4e81131dc699d': raise ValueError('unexpected renderer SHA')
+    if args.renderer_sha != 'af63f5c26feff772865852646a3ea235bb07c2eb': raise ValueError('unexpected renderer SHA')
     if args.name != 'RyGT7-ci-' + args.source_sha[:8]: raise ValueError('unexpected package name')
     assemble(args)
     info = json.loads(args.info.read_text(encoding="utf-8"))

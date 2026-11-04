@@ -12,10 +12,10 @@ import zipfile
 
 PROJECT = 'https://gitlab.com/api/v4/projects/88084032'
 API = PROJECT + '/repository/branches/main'
-RENDERER = '5bfec380dd02ecd56b482b1d8ed4e81131dc699d'
+RENDERER = 'af63f5c26feff772865852646a3ea235bb07c2eb'
 BASE = 'd8efb3c45b9eb164a66330d60e68638ff3d2a2a74fd51680482e989791697d2e'
 BASE_URL = 'https://gitlab.com/api/v4/projects/88084032/packages/generic/rygt7/2026-10-31/RyGT7-2026-10-31-prerelease.zip'
-CONFIGURED = 'https://gitlab.com/Maxi_Razorback/shadgt7.git'
+CONFIGURED = 'https://gitlab.com/rygt-team/shadgt7.git'
 FETCHED = 'https://gitlab.com/rygt-team/shadgt7.git'
 SHA = re.compile(r'^[0-9a-f]{40}$')
 DIGEST = re.compile(r'^[0-9a-f]{64}$')

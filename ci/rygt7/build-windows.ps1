@@ -79,9 +79,9 @@ try {
     $env:LIB = "$($builtins.DirectoryName);$oldLib"
     Invoke-CmdFile (Join-Path $source 'runtime\gt7\build.cmd') $stubDir
     $pin = Get-Content (Join-Path $source 'build-support\renderer.json') -Raw | ConvertFrom-Json
-    if ($pin.commit -cne '5bfec380dd02ecd56b482b1d8ed4e81131dc699d' -or
-        $pin.repository -cne 'https://gitlab.com/Maxi_Razorback/shadgt7.git' -or
-        $pin.branch -cne 'fix/amd-pipeline-policy') { throw 'Unexpected renderer pin; update and re-audit adapter explicitly' }
+    if ($pin.commit -cne 'af63f5c26feff772865852646a3ea235bb07c2eb' -or
+        $pin.repository -cne 'https://gitlab.com/rygt-team/shadgt7.git' -or
+        $pin.branch -cne 'main') { throw 'Unexpected renderer pin; update and re-audit adapter explicitly' }
     $mirror = 'https://gitlab.com/rygt-team/shadgt7.git'
     $renderer = Join-Path $workspace 'renderer-source'
     Invoke-Checked git @('clone','--no-checkout',$mirror,$renderer)

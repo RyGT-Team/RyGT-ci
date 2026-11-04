@@ -29,11 +29,12 @@ packager's synthetic test and the worker's package validation. This is compilati
 and packaging validation, not an in-game or GPU performance test.
 
 The renderer is the exact commit specified by `build-support/renderer.json`.
-The current pin is `5bfec380dd02ecd56b482b1d8ed4e81131dc699d`; its configured
-`Maxi_Razorback/shadgt7` fork is not publicly readable, so CI fetches that same Git
-object from the verified public `rygt-team/shadgt7` mirror. Both repository URLs
-are recorded. A changed pin must be reviewed with the adapter and validator;
-the workflow never substitutes a floating branch head.
+The current pin is `af63f5c26feff772865852646a3ea235bb07c2eb` from the official
+`rygt-team/shadgt7` repository's `main` branch. CI fetches that exact Git object,
+not the floating branch head; the configured and fetched repository URLs are
+recorded. The build adapter, assembler and publication validator all require this
+reviewed pin. Its VMA revision and patch are unchanged from the prior pin, so the
+strict patch-only provenance verification remains in place.
 
 The source release packager expects a complete runtime. A SHA-256 pinned official
 RyGT7 2026-10-31 package supplies libraries not rebuilt by the current build and
