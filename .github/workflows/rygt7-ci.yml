@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       commit: ${{ steps.source.outputs.commit }}
+      renderer_commit: ${{ steps.source.outputs.renderer_commit }}
       needed: ${{ steps.source.outputs.needed }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -44,6 +45,7 @@ jobs:
     timeout-minutes: 30
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
     steps:
       - name: Fetch exact public RyGT7 source
         run: |
@@ -77,6 +79,7 @@ jobs:
     timeout-minutes: 180
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -119,7 +122,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           . ./ci/rygt7/setup-tools.ps1
-          & ./ci/rygt7/build-windows.ps1 -SourceRoot C:/rygt7-ci/source -SourceSha $env:SOURCE_SHA -OutputRoot C:/rygt7-ci/build -UcrtRoot $env:UCRT_ROOT
+          & ./ci/rygt7/build-windows.ps1 -SourceRoot C:/rygt7-ci/source -SourceSha $env:SOURCE_SHA -RendererSha $env:RENDERER_SHA -OutputRoot C:/rygt7-ci/build -UcrtRoot $env:UCRT_ROOT
           $env:GT7_SOURCE_ROOT = 'C:/rygt7-ci/source'
           $env:GT7_RENDERER_ROOT = 'C:/rygt7-ci/build/renderer-source'
           python -m unittest discover -s ci/rygt7 -p 'test_*.py'
@@ -131,7 +134,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Windows package validation failed' }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rygt7-windows-${{ needs.source.outputs.commit }}
+          name: rygt7-windows-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: C:/rygt7-ci/build/dist/
           if-no-files-found: error
           retention-days: 7
@@ -140,6 +143,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
       ARTIFACT_DIR: dist
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -147,13 +151,13 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: rygt7-windows-${{ needs.source.outputs.commit }}
+          name: rygt7-windows-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: dist/
       - name: Independently validate package and provenance
         run: python3 ci/rygt7/registry_ci.py validate
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rygt7-ci-${{ needs.source.outputs.commit }}
+          name: rygt7-ci-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: |
             dist/RyGT7-ci-*.zip
             dist/RyGT7-ci-*.zip.sha256
@@ -166,6 +170,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
       ARTIFACT_DIR: dist
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -173,7 +178,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: rygt7-ci-${{ needs.source.outputs.commit }}
+          name: rygt7-ci-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: dist/
       - name: Publish verified RyGT7 ci package to GitLab
         env:

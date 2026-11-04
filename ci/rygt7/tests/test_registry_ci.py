@@ -14,9 +14,15 @@ MODULE = Path(__file__).resolve().parents[1] / 'registry_ci.py'
 spec = importlib.util.spec_from_file_location('registry_ci', MODULE)
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 COMMIT = 'a' * 40
+RENDERER = 'b' * 40
 
 class Validation(unittest.TestCase):
     def setUp(self):
+        renderer = mock.patch.object(m, 'RENDERER', RENDERER)
+        renderer.start(); self.addCleanup(renderer.stop)
+        self.real_resolve_renderer = m.resolve_renderer
+        resolver = mock.patch.object(m, 'resolve_renderer', return_value=RENDERER)
+        resolver.start(); self.addCleanup(resolver.stop)
         self.env = mock.patch.dict(os.environ, {'GITHUB_ACTIONS':'false'})
         self.env.start(); self.addCleanup(self.env.stop)
         self.tmp = tempfile.TemporaryDirectory(); self.folder = Path(self.tmp.name)
@@ -107,6 +113,7 @@ class Validation(unittest.TestCase):
         self.assertEqual(written[-1], 'CI-BUILD.json')
         self.assertEqual(written[0], 'CI-PENDING.json')
         self.assertEqual(len(written),4)
+        self.assertTrue(all('/main-'+COMMIT+'-renderer-'+RENDERER+'/' in url for url in bodies))
         written.clear()
         def broken(request,timeout=0):
             if isinstance(request,str): return Response(b'wrong')
@@ -129,6 +136,7 @@ class Validation(unittest.TestCase):
         output.write_text('')
         with mock.patch.dict(os.environ, {'GITHUB_OUTPUT':str(output),'FORCE_BUILD':'false'}), mock.patch.object(m.urllib.request,'urlopen',side_effect=calls): m.resolve()
         self.assertIn('needed=false',output.read_text())
+        self.assertIn('renderer_commit='+RENDERER,output.read_text())
     def test_resolve_missing_and_denied(self):
         class Response(io.BytesIO): pass
         url='https://example.invalid'
@@ -144,5 +152,36 @@ class Validation(unittest.TestCase):
         calls=[Response(json.dumps({'commit':{'id':COMMIT}}).encode()),Response(json.dumps({'commit':'b'*40}).encode())]
         with mock.patch.dict(os.environ, {'GITHUB_OUTPUT':str(self.folder/'output')}), mock.patch.object(m.urllib.request,'urlopen',side_effect=calls):
             with self.assertRaises(ValueError): m.resolve()
+
+    def test_renderer_head_resolution(self):
+        class Response(io.BytesIO): pass
+        with mock.patch.object(m.urllib.request, 'urlopen', return_value=Response(json.dumps({'commit':{'id':RENDERER}}).encode())) as request:
+            self.assertEqual(self.real_resolve_renderer(), RENDERER)
+            self.assertEqual(request.call_args.args[0], 'https://gitlab.com/api/v4/projects/rygt-team%2Fshadgt7/repository/branches/main')
+        for invalid in ('', 'z'*40, 'a'*39):
+            with mock.patch.object(m.urllib.request, 'urlopen', return_value=Response(json.dumps({'commit':{'id':invalid}}).encode())):
+                with self.assertRaises(ValueError): self.real_resolve_renderer()
+
+    def test_renderer_change_uses_distinct_package_path(self):
+        class Response(io.BytesIO): pass
+        output=self.folder/'output'; urls=[]
+        def open_url(url, timeout=0):
+            urls.append(url)
+            if url == m.API: return Response(json.dumps({'commit':{'id':COMMIT}}).encode())
+            raise urllib.error.HTTPError(url,404,'missing',{},None)
+        with mock.patch.dict(os.environ, {'GITHUB_OUTPUT':str(output),'FORCE_BUILD':'false'}), mock.patch.object(m.urllib.request,'urlopen',side_effect=open_url):
+            m.resolve()
+            m.resolve_renderer.return_value='c'*40
+            m.resolve()
+        self.assertIn('/main-'+COMMIT+'-renderer-'+RENDERER+'/CI-BUILD.json',urls[1])
+        self.assertIn('/main-'+COMMIT+'-renderer-'+'c'*40+'/CI-BUILD.json',urls[3])
+        self.assertIn('renderer_commit='+'c'*40,output.read_text())
+        self.assertEqual(output.read_text().count('needed=true'),2)
+
+    def test_invalid_renderer_rejected(self):
+        self.write()
+        for invalid in ('', 'z'*40, 'a'*39):
+            with mock.patch.object(m, 'RENDERER', invalid):
+                with self.assertRaises(ValueError): m.validate(self.folder, COMMIT)
 
 if __name__ == '__main__': unittest.main()

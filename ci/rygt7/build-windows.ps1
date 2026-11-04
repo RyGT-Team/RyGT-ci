@@ -1,12 +1,14 @@
 param(
     [Parameter(Mandatory=$true)][string]$SourceRoot,
     [Parameter(Mandatory=$true)][string]$SourceSha,
+    [Parameter(Mandatory=$true)][string]$RendererSha,
     [Parameter(Mandatory=$true)][string]$OutputRoot,
     [string]$UcrtRoot = 'C:\msys64\ucrt64'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if ($SourceSha -cnotmatch '^[0-9a-f]{40}$') { throw 'SourceSha must be a full lowercase Git SHA' }
+if ($RendererSha -cnotmatch '^[0-9a-f]{40}$' -or $RendererSha -cne $env:RENDERER_SHA) { throw 'RendererSha must match the resolved CI revision' }
 $source = (Resolve-Path -LiteralPath $SourceRoot).Path
 $workspace = [IO.Path]::GetFullPath($OutputRoot)
 if (Test-Path -LiteralPath $workspace) { throw 'OutputRoot must not already exist' }
@@ -79,15 +81,15 @@ try {
     $env:LIB = "$($builtins.DirectoryName);$oldLib"
     Invoke-CmdFile (Join-Path $source 'runtime\gt7\build.cmd') $stubDir
     $pin = Get-Content (Join-Path $source 'build-support\renderer.json') -Raw | ConvertFrom-Json
-    if ($pin.commit -cne 'af63f5c26feff772865852646a3ea235bb07c2eb' -or
-        $pin.repository -cne 'https://gitlab.com/rygt-team/shadgt7.git' -or
+    # CI follows official main, resolved once by the controller; do not build a floating ref.
+    if ($pin.repository -cne 'https://gitlab.com/rygt-team/shadgt7.git' -or
         $pin.branch -cne 'main') { throw 'Unexpected renderer pin; update and re-audit adapter explicitly' }
     $mirror = 'https://gitlab.com/rygt-team/shadgt7.git'
     $renderer = Join-Path $workspace 'renderer-source'
     Invoke-Checked git @('clone','--no-checkout',$mirror,$renderer)
-    Invoke-Checked git @('-C',$renderer,'fetch','--no-tags','origin',$pin.commit)
+    Invoke-Checked git @('-C',$renderer,'fetch','--no-tags','origin',$RendererSha)
     Invoke-Checked git @('-C',$renderer,'checkout','--detach','FETCH_HEAD')
-    Verify-Commit $renderer $pin.commit
+    Verify-Commit $renderer $RendererSha
     Invoke-Checked git @('-C',$renderer,'submodule','update','--init','--recursive','--depth=1','--jobs=4')
     $rendererBuild = Join-Path $workspace 'renderer-build'
     Invoke-Checked $nativeCmake @('-S',$renderer,'-B',$rendererBuild,'-G','Ninja','-DCMAKE_BUILD_TYPE=Release','-DCMAKE_C_COMPILER=clang-cl','-DCMAKE_CXX_COMPILER=clang-cl','-DCMAKE_LINKER=lld-link',"-DCMAKE_MAKE_PROGRAM=$nativeNinjaCmake","-DCMAKE_RC_COMPILER=$nativeRc","-DPython3_EXECUTABLE=$nativePythonCmake",'-DSHADGT_RYTY_GPU=ON','-DHAVE_ENDIAN_H=OFF','-DENABLE_DISCORD_RPC=ON')
@@ -107,6 +109,6 @@ try {
         ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $toolchainInfo
     $packageOut = Join-Path $workspace 'dist'; New-Item -ItemType Directory -Path $packageOut | Out-Null
     $name = "RyGT7-ci-$($SourceSha.Substring(0,8))"
-    Invoke-Checked $nativePython @((Join-Path $PSScriptRoot 'assemble.py'), '--source',$source,'--base',$base,'--runtime',(Join-Path $workspace 'assembled-runtime'), '--built-libs',(Join-Path $runtimeBuild 'core\libs\libs'), '--renderer-build',$rendererBuild,'--stubs',$stubDir,'--ucrt',$ucrt,'--info',(Join-Path $workspace 'BUILD_INFO.json'),'--launcher',(Join-Path $launcher 'RyGT7.exe'),'--converter',(Join-Path $runtimeBuild 'core\relinker\ryty.exe'),'--renderer-source',$renderer,'--wheel-probe',(Join-Path $runtimeBuild 'core\libs\prx\libScePad\ryty-wheel-probe.exe'),'--out',$packageOut,'--source-sha',$SourceSha,'--renderer-sha',$pin.commit,'--renderer-configured-url',$pin.repository,'--renderer-fetch-url',$mirror,'--toolchain-info',$toolchainInfo,'--name',$name)
+    Invoke-Checked $nativePython @((Join-Path $PSScriptRoot 'assemble.py'), '--source',$source,'--base',$base,'--runtime',(Join-Path $workspace 'assembled-runtime'), '--built-libs',(Join-Path $runtimeBuild 'core\libs\libs'), '--renderer-build',$rendererBuild,'--stubs',$stubDir,'--ucrt',$ucrt,'--info',(Join-Path $workspace 'BUILD_INFO.json'),'--launcher',(Join-Path $launcher 'RyGT7.exe'),'--converter',(Join-Path $runtimeBuild 'core\relinker\ryty.exe'),'--renderer-source',$renderer,'--wheel-probe',(Join-Path $runtimeBuild 'core\libs\prx\libScePad\ryty-wheel-probe.exe'),'--out',$packageOut,'--source-sha',$SourceSha,'--renderer-sha',$RendererSha,'--renderer-configured-url',$pin.repository,'--renderer-fetch-url',$mirror,'--toolchain-info',$toolchainInfo,'--name',$name)
     Write-Output "GT7 package: $packageOut\$name.zip"
 } finally { $env:PATH=$oldPath; $env:LIB=$oldLib }

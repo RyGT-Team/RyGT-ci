@@ -28,6 +28,9 @@ class PackageIntegration(unittest.TestCase):
                           GIT_CONFIG_KEY_2='safe.directory',GIT_CONFIG_VALUE_2=str(renderer_source/'externals/vma').replace('\\','/'))
         commit=subprocess.check_output(['git','-C',str(source),'rev-parse','HEAD'],text=True).strip()
         assembler=load('gt7_assembler',HERE/'assemble.py');validator=load('gt7_validator',HERE/'registry_ci.py')
+        original_renderer=validator.RENDERER
+        self.addCleanup(setattr, validator, 'RENDERER', original_renderer)
+        validator.RENDERER=subprocess.check_output(['git','-C',str(renderer_source),'rev-parse','HEAD'],text=True).strip()
         with tempfile.TemporaryDirectory(prefix='gt7-ci-package-test-') as tmp:
             root=Path(tmp)
             for n in ('built','renderer/externals/fixture','stubs','ucrt/bin','deps/fixture','out'):

@@ -2,7 +2,8 @@
 
 This separate workflow builds the public `main` branch of
 https://gitlab.com/rygt-team/rygt7. Each job checks out the exact resolved source
-commit. It checks for new source every 15 minutes, or runs manually with a `force`
+commit and the official `rygt-team/shadgt7` `main` HEAD once per run. It checks
+for changes to either branch every 15 minutes, or runs manually with a `force`
 input. Pull requests build and validate but cannot publish. The RyGTS workflows
 and their Release/Debug packages are independent.
 
@@ -10,9 +11,9 @@ and their Release/Debug packages are independent.
 
 The initial RyGT7 channel is a Release client package:
 
-- GitHub artifact: `rygt7-ci-<full source commit>`, retained for seven days.
+- GitHub artifact: `rygt7-ci-<full source commit>-renderer-<full renderer commit>`, retained for seven days.
 - GitLab project: `rygt-team/rygt7`, Generic Package Registry channel `ci`, version
-  `main-<full source commit>`.
+  `main-<full source commit>-renderer-<full renderer commit>`.
 - Files: `RyGT7-ci-<short source commit>.zip`, its `.zip.sha256`, and `CI-BUILD.json`.
 
 No tag, release, changelog or announcement is created. There is no RyGT7 Debug
@@ -28,13 +29,19 @@ and supplemental GT7 stubs. Tests include launcher/setup checks, the source
 packager's synthetic test and the worker's package validation. This is compilation
 and packaging validation, not an in-game or GPU performance test.
 
-The renderer is the exact commit specified by `build-support/renderer.json`.
-The current pin is `af63f5c26feff772865852646a3ea235bb07c2eb` from the official
-`rygt-team/shadgt7` repository's `main` branch. CI fetches that exact Git object,
-not the floating branch head; the configured and fetched repository URLs are
-recorded. The build adapter, assembler and publication validator all require this
-reviewed pin. Its VMA revision and patch are unchanged from the prior pin, so the
-strict patch-only provenance verification remains in place.
+The controller resolves the official `rygt-team/shadgt7` `main` HEAD to a full
+SHA once, alongside the RyGT7 `main` source SHA. Windows fetches that exact
+renderer object; all build, assembly and publication checks use the same resolved
+value. This CI policy overrides the renderer commit declared by the runtime's
+`build-support/renderer.json`; its official repository/branch requirement is
+still checked. The configured and fetched URLs in `BUILD_INFO.json` describe
+the CI selection. Branch movement during a run cannot silently change its build.
+
+Package versions and GitHub artifacts include both full SHAs, so a renderer-only
+change triggers a new build without overwriting a different source/renderer pair.
+The archive filename stays `RyGT7-ci-<short source commit>.zip` within that pair's
+version. The exact VMA patch and clean-source provenance checks remain enforced;
+an upstream patch change intentionally fails until the adapter is re-audited.
 
 The source release packager expects a complete runtime. A SHA-256 pinned official
 RyGT7 2026-10-31 package supplies libraries not rebuilt by the current build and
@@ -75,6 +82,7 @@ python -m unittest discover -s ci/rygt7 -p test_*.py
 python -m unittest discover -s ci/rygt7/tests -p test_*.py
 ```
 
+Set `RENDERER_SHA` to the resolved renderer SHA for direct package validation.
 Set `GT7_SOURCE_ROOT` and `GT7_RENDERER_ROOT` to clean exact source checkouts to
 include the real-packager synthetic integration test. The full Windows build
 also needs the hosted UCRT64, Visual Studio x64 and pinned LLVM environment.

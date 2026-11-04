@@ -12,7 +12,8 @@ import zipfile
 
 PROJECT = 'https://gitlab.com/api/v4/projects/88084032'
 API = PROJECT + '/repository/branches/main'
-RENDERER = 'af63f5c26feff772865852646a3ea235bb07c2eb'
+RENDERER_API = 'https://gitlab.com/api/v4/projects/rygt-team%2Fshadgt7/repository/branches/main'
+RENDERER = os.environ.get('RENDERER_SHA', '')
 BASE = 'd8efb3c45b9eb164a66330d60e68638ff3d2a2a74fd51680482e989791697d2e'
 BASE_URL = 'https://gitlab.com/api/v4/projects/88084032/packages/generic/rygt7/2026-10-31/RyGT7-2026-10-31-prerelease.zip'
 CONFIGURED = 'https://gitlab.com/rygt-team/shadgt7.git'
@@ -25,11 +26,19 @@ BAD = {'game', 'games', 'firmware', 'saves', 'save', 'savedata', 'shader-cache',
 def fail():
     raise ValueError('GT7 artifact validation failed')
 
+def resolve_renderer():
+    with urllib.request.urlopen(RENDERER_API, timeout=60) as response:
+        commit = json.load(response)['commit']['id']
+    if not isinstance(commit, str) or not SHA.fullmatch(commit): fail()
+    return commit
+
 def resolve():
+    global RENDERER
+    RENDERER = resolve_renderer()
     with urllib.request.urlopen(API, timeout=60) as response:
         commit = json.load(response)['commit']['id']
     if not isinstance(commit, str) or not SHA.fullmatch(commit): fail()
-    url = PROJECT + '/packages/generic/ci/main-' + commit + '/CI-BUILD.json'
+    url = PROJECT + '/packages/generic/ci/main-' + commit + '-renderer-' + RENDERER + '/CI-BUILD.json'
     needed = False
     try:
         with urllib.request.urlopen(url, timeout=60) as response: marker = json.load(response)
@@ -48,14 +57,14 @@ def resolve():
             needed = True
     needed = needed or os.environ.get('FORCE_BUILD') == 'true'
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
-        out.write(f'commit={commit}\nneeded={str(needed).lower()}\n')
-    print('Resolved GT7 main commit')
+        out.write(f'commit={commit}\nrenderer_commit={RENDERER}\nneeded={str(needed).lower()}\n')
+    print(f'Resolved GT7 main {commit}; shadgt7 main {RENDERER}')
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 def validate(folder, commit):
-    if not SHA.fullmatch(commit): fail()
+    if not SHA.fullmatch(commit) or not SHA.fullmatch(RENDERER): fail()
     folder = Path(folder)
     name = f'RyGT7-ci-{commit[:8]}.zip'
     marker = json.loads((folder / 'CI-BUILD.json').read_text(encoding='utf-8-sig'))
@@ -131,7 +140,7 @@ def publish(folder, commit):
     validate(folder, commit)
     folder = Path(folder)
     name = f'RyGT7-ci-{commit[:8]}.zip'
-    base = PROJECT + '/packages/generic/ci/main-' + commit + '/'
+    base = PROJECT + '/packages/generic/ci/main-' + commit + '-renderer-' + RENDERER + '/'
     token = os.environ['GITLAB_PACKAGE_TOKEN']
     for filename in ('CI-PENDING.json', name, name + '.sha256', 'CI-BUILD.json'):
         path = folder / ('CI-BUILD.json' if filename == 'CI-PENDING.json' else filename)
@@ -149,7 +158,7 @@ def publish(folder, commit):
     print('GT7 package published and verified')
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as out:
-            out.write(f'RyGT7 CI build `{commit}`\n\n[Source](https://gitlab.com/rygt-team/rygt7/-/commit/{commit}) | [ZIP]({base}{name}) | [SHA-256]({base}{name}.sha256)\n')
+            out.write(f'RyGT7 CI build `{commit}`, renderer `{RENDERER}`\n\n[Source](https://gitlab.com/rygt-team/rygt7/-/commit/{commit}) | [Renderer](https://gitlab.com/rygt-team/shadgt7/-/commit/{RENDERER}) | [ZIP]({base}{name}) | [SHA-256]({base}{name}.sha256)\n')
 
 if __name__ == '__main__':
     if len(sys.argv) != 2: fail()
