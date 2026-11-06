@@ -110,7 +110,7 @@ class PublishTests(unittest.TestCase):
             folder.mkdir(parents=True); variants = []
             for channel in registry.CHANNELS:
                 archive = folder / f'RyGTS-{channel}-{SOURCE[:8]}.zip'
-                info = {'renderer_source': f'{REPOSITORY}\n{RENDERER}\n', 'runtime_overlay': {'renderer_commit': RENDERER}}
+                info = {'renderer_source': f'{REPOSITORY}\n{RENDERER}\n'}
                 with zipfile.ZipFile(archive, 'w') as package:
                     package.writestr(f'{archive.stem}/BUILD_INFO.txt', json.dumps(info))
                 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -149,7 +149,7 @@ class PublishTests(unittest.TestCase):
             variants = []
             for channel in registry.CHANNELS:
                 archive = folder / f'RyGTS-{channel}-{SOURCE[:8]}.zip'
-                info = {'renderer_source': f'{REPOSITORY}\n{OTHER}\n', 'runtime_overlay': {'renderer_commit': OTHER}}
+                info = {'renderer_source': f'{REPOSITORY}\n{OTHER}\n'}
                 with zipfile.ZipFile(archive, 'w') as package:
                     package.writestr(f'{archive.stem}/BUILD_INFO.txt', json.dumps(info))
                 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
