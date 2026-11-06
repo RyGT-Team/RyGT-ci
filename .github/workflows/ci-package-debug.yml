@@ -1,0 +1,165 @@
+﻿name: RyGTS Diagnostics CI package
+run-name: RyGTS Diagnostics development build
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if this commit is already packaged
+        type: boolean
+        default: false
+  schedule:
+    - cron: '22,52 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: rygts-diagnostics-package
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      renderer_commit: ${{ steps.source.outputs.renderer_commit }}
+      needed: ${{ steps.source.outputs.needed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Test renderer revision and package controls
+        run: python3 -m unittest discover -s ci/tests -p 'test_*.py'
+      - id: source
+        env:
+          FORCE_BUILD: ${{ inputs.force }}
+        run: python3 ci/registry_ci.py resolve debug-ci
+  windows:
+    needs: [source, tests]
+    if: needs.source.outputs.needed == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 180
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
+      RYGT_CI_ROOT: C:/rygt-ci/${{ github.run_id }}-diagnostics
+    steps:
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - name: Fetch exact GitLab source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid source SHA' }
+          New-Item -ItemType Directory -Force $env:RYGT_CI_ROOT | Out-Null
+          Set-Location $env:RYGT_CI_ROOT
+          git init
+          git config core.longpaths true
+          git remote add origin https://gitlab.com/rygt-team/RyGTS.git
+          git fetch --depth=1 origin $env:SOURCE_SHA
+          if ($LASTEXITCODE) { throw 'GitLab fetch failed' }
+          git checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -or (git rev-parse HEAD) -cne $env:SOURCE_SHA) { throw 'Source mismatch' }
+      - name: Build Diagnostics launcher and renderer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location $env:RYGT_CI_ROOT
+          python -m unittest discover -s ci/tests -p 'test_*.py'
+          if ($LASTEXITCODE) { throw 'CI regression tests failed' }
+          . ./ci/setup-hosted-windows.ps1
+          & ./ci/build-windows.ps1 -Target Launcher -Flavor Diagnostics
+          & ./ci/build-windows.ps1 -Target Renderer -Flavor Diagnostics
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-diagnostics-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: |
+            ${{ env.RYGT_CI_ROOT }}/artifacts/launcher-diagnostics/**
+            ${{ env.RYGT_CI_ROOT }}/artifacts/renderer-diagnostics/**
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: capture-layout-debug-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: ${{ env.RYGT_CI_ROOT }}/artifacts/renderer-diagnostics/capture-layout-debug.json
+          if-no-files-found: ignore
+          retention-days: 7
+  tests:
+    needs: source
+    if: needs.source.outputs.needed == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
+    steps:
+      - name: Fetch exact GitLab source
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init source
+          cd source
+          git remote add origin https://gitlab.com/rygt-team/RyGTS.git
+          git fetch --depth=1 origin "$SOURCE_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Build and test converter
+        working-directory: source
+        run: |
+          python3 -m unittest discover -s ci/tests -p 'test_*.py'
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build
+          cmake --preset linux-release-cli
+          cmake --build --preset linux-release-cli --parallel 2
+          ctest --test-dir build/linux-release-cli --output-on-failure --no-tests=error --output-junit converter-tests.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: converter-tests-diagnostics-${{ needs.source.outputs.commit }}
+          path: source/converter-tests.xml
+          retention-days: 7
+  package:
+    needs: [source, windows, tests]
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ needs.source.outputs.commit }}
+      RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
+      CI_CHANNEL: debug-ci
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Fetch exact GitLab source
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git init source
+          cd source
+          git remote add origin https://gitlab.com/rygt-team/RyGTS.git
+          git fetch --depth=1 origin "$SOURCE_SHA"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: windows-diagnostics-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: source/artifacts/
+      - name: Assemble and validate Diagnostics package
+        working-directory: source
+        env:
+          CI_COMMIT_SHA: ${{ needs.source.outputs.commit }}
+          CI_PIPELINE_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CI_CHANNEL: debug-ci
+        run: python3 ci/package.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: debug-ci-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: |
+            source/dist/RyGTS-debug-ci-*.zip
+            source/dist/RyGTS-debug-ci-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package-manifest-diagnostics-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: source/dist/CI-PACKAGES.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Publish debug-ci package to GitLab
+        env:
+          GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
+          CI_CHANNEL: debug-ci
+        run: python3 ci/registry_ci.py publish debug-ci

@@ -1,5 +1,5 @@
-name: RyGTS CI package
-run-name: RyGTS development CI build
+name: RyGTS Release CI package
+run-name: RyGTS Release development build
 on:
   workflow_dispatch:
     inputs:
@@ -8,11 +8,11 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '7,22,37,52 * * * *'
+    - cron: '7,37 * * * *'
 permissions:
   contents: read
 concurrency:
-  group: rygt-development-package
+  group: rygts-release-package
   cancel-in-progress: false
 jobs:
   source:
@@ -28,7 +28,7 @@ jobs:
       - id: source
         env:
           FORCE_BUILD: ${{ inputs.force }}
-        run: python3 ci/registry_ci.py resolve
+        run: python3 ci/registry_ci.py resolve ci
   windows:
     needs: [source, tests]
     if: needs.source.outputs.needed == 'true'
@@ -37,6 +37,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
       RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
+      RYGT_CI_ROOT: C:/rygt-ci/${{ github.run_id }}-release
     steps:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -46,8 +47,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:SOURCE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid source SHA' }
-          New-Item -ItemType Directory -Force C:/rygt-ci | Out-Null
-          Set-Location C:/rygt-ci
+          New-Item -ItemType Directory -Force $env:RYGT_CI_ROOT | Out-Null
+          Set-Location $env:RYGT_CI_ROOT
           git init
           git config core.longpaths true
           git remote add origin https://gitlab.com/rygt-team/RyGTS.git
@@ -55,30 +56,23 @@ jobs:
           if ($LASTEXITCODE) { throw 'GitLab fetch failed' }
           git checkout --detach FETCH_HEAD
           if ($LASTEXITCODE -or (git rev-parse HEAD) -cne $env:SOURCE_SHA) { throw 'Source mismatch' }
-      - name: Build launcher and renderer
+      - name: Build Release launcher and renderer
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Set-Location C:/rygt-ci
+          Set-Location $env:RYGT_CI_ROOT
           python -m unittest discover -s ci/tests -p 'test_*.py'
           if ($LASTEXITCODE) { throw 'CI regression tests failed' }
           . ./ci/setup-hosted-windows.ps1
           & ./ci/build-windows.ps1 -Target Launcher
           & ./ci/build-windows.ps1 -Target Renderer -Flavor Release
-          & ./ci/build-windows.ps1 -Target Launcher -Flavor Diagnostics
-          & ./ci/build-windows.ps1 -Target Renderer -Flavor Diagnostics
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: windows-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
-          path: C:/rygt-ci/artifacts/
+          name: windows-release-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          path: |
+            ${{ env.RYGT_CI_ROOT }}/artifacts/launcher/**
+            ${{ env.RYGT_CI_ROOT }}/artifacts/renderer/**
           if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: capture-layout-debug-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
-          path: C:/rygt-ci/artifacts/renderer-diagnostics/capture-layout-debug.json
-          if-no-files-found: ignore
           retention-days: 7
   tests:
     needs: source
@@ -110,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: converter-tests-${{ needs.source.outputs.commit }}
+          name: converter-tests-release-${{ needs.source.outputs.commit }}
           path: source/converter-tests.xml
           retention-days: 7
   package:
@@ -119,6 +113,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ needs.source.outputs.commit }}
       RENDERER_SHA: ${{ needs.source.outputs.renderer_commit }}
+      CI_CHANNEL: ci
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Fetch exact GitLab source
@@ -133,13 +128,14 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: windows-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          name: windows-release-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: source/artifacts/
-      - name: Assemble and validate separate Release and Debug packages
+      - name: Assemble and validate Release package
         working-directory: source
         env:
           CI_COMMIT_SHA: ${{ needs.source.outputs.commit }}
           CI_PIPELINE_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CI_CHANNEL: ci
         run: python3 ci/package.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -151,19 +147,12 @@ jobs:
           retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: debug-ci-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
-          path: |
-            source/dist/RyGTS-debug-ci-*.zip
-            source/dist/RyGTS-debug-ci-*.zip.sha256
-          if-no-files-found: error
-          retention-days: 7
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: package-manifest-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
+          name: package-manifest-release-${{ needs.source.outputs.commit }}-renderer-${{ needs.source.outputs.renderer_commit }}
           path: source/dist/CI-PACKAGES.json
           if-no-files-found: error
           retention-days: 7
-      - name: Publish ci and debug-ci packages to GitLab
+      - name: Publish ci package to GitLab
         env:
           GITLAB_PACKAGE_TOKEN: ${{ secrets.GITLAB_PACKAGE_TOKEN }}
-        run: python3 ci/registry_ci.py publish
+          CI_CHANNEL: ci
+        run: python3 ci/registry_ci.py publish ci
