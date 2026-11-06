@@ -12,6 +12,15 @@ API = 'https://gitlab.com/api/v4/projects/rygt-team%2FRyGTS'
 CHANNELS = ('ci', 'debug-ci')
 
 
+def selected_channels(channel=None):
+    channel = channel or os.environ.get('CI_CHANNEL')
+    if channel is None:
+        return CHANNELS
+    if channel not in CHANNELS:
+        raise ValueError('Invalid CI package channel')
+    return (channel,)
+
+
 def version(commit, renderer):
     if not re.fullmatch('[0-9a-f]{40}', commit) or not re.fullmatch('[0-9a-f]{40}', renderer):
         raise ValueError('Invalid source or renderer commit')
@@ -35,7 +44,8 @@ def renderer_revision(commit):
     return revision
 
 
-def resolve():
+def resolve(channel=None):
+    channels = selected_channels(channel)
     with urllib.request.urlopen(API + '/repository/branches/development', timeout=60) as response:
         commit = json.load(response)['commit']['id']
     if not isinstance(commit, str) or not re.fullmatch('[0-9a-f]{40}', commit):
@@ -43,12 +53,12 @@ def resolve():
     renderer = renderer_revision(commit)
     package_version = version(commit, renderer)
     needed = 'false'
-    for channel in CHANNELS:
-        url = API + '/packages/generic/' + channel + '/' + package_version + '/CI-BUILD.json'
+    for selected in channels:
+        url = API + '/packages/generic/' + selected + '/' + package_version + '/CI-BUILD.json'
         try:
             with urllib.request.urlopen(url, timeout=60) as response:
                 previous = json.load(response)
-            if (previous.get('commit') != commit or previous.get('channel') != channel or
+            if (previous.get('commit') != commit or previous.get('channel') != selected or
                     previous.get('renderer_commit') != renderer):
                 raise RuntimeError('Existing package marker has unexpected identity')
         except urllib.error.HTTPError as error:
@@ -59,10 +69,11 @@ def resolve():
         needed = 'true'
     with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
         output.write(f'commit={commit}\nrenderer_commit={renderer}\nversion={package_version}\nneeded={needed}\n')
-    print(f'GitLab development: {commit}; renderer: {renderer}; build needed: {needed}')
+    print(f'GitLab development: {commit}; renderer: {renderer}; channel: {", ".join(channels)}; build needed: {needed}')
 
 
-def publish():
+def publish(channel=None):
+    channels = selected_channels(channel)
     commit = os.environ['SOURCE_SHA']
     renderer = os.environ['RENDERER_SHA']
     package_version = version(commit, renderer)
@@ -70,9 +81,9 @@ def publish():
     manifest = json.loads((folder / 'CI-PACKAGES.json').read_text())
     variants = manifest.get('variants', [])
     if (manifest.get('schema') != 2 or manifest.get('commit') != commit or
-            [v.get('channel') for v in variants] != list(CHANNELS) or
+            [v.get('channel') for v in variants] != list(channels) or
             manifest.get('renderer_commit', renderer) != renderer):
-        raise RuntimeError('Both package channels are required')
+        raise RuntimeError('Package manifest channels do not match selection')
     packages = []
     # Validate every package before making any network writes.
     for variant in variants:
@@ -132,4 +143,5 @@ def publish():
 
 if __name__ == '__main__':
     import sys
-    {'resolve': resolve, 'publish': publish}[sys.argv[1]]()
+    command = {'resolve': resolve, 'publish': publish}[sys.argv[1]]
+    command(sys.argv[2] if len(sys.argv) > 2 else None)
