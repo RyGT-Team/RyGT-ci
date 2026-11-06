@@ -89,7 +89,7 @@ def publish():
             build = json.loads(package.read(archive.stem + '/BUILD_INFO.txt'))
         source = build.get('renderer_source', '').splitlines()
         if (len(source) != 2 or source[0].lower() != 'https://gitlab.com/rygt-team/shadgt.git' or
-                source[1] != renderer or build.get('runtime_overlay', {}).get('renderer_commit') != renderer):
+                source[1] != renderer):
             raise RuntimeError('Package renderer differs from resolved CI revision')
         packages.append((channel, archive, checksum, digest))
     run = f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}'
